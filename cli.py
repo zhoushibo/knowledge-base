@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # 添加父目录到路径，以便导入核心模块
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core import KnowledgeIngest, KnowledgeIndex, KnowledgeSearch, KnowledgeLink
+from core import KnowledgeIngest, KnowledgeIndex, KnowledgeSearch, KnowledgeLink, EmbeddingGenerator
 
 # 配置日志
 logging.basicConfig(
@@ -47,23 +47,39 @@ def cmd_import(args):
     logger.info(f"开始导入文件：{args.file}")
     
     config = load_config()
+    
+    # 初始化组件
     ingest = KnowledgeIngest(max_file_size_mb=config["max_file_size_mb"])
+    embedding_gen = EmbeddingGenerator(
+        cache_path="./data/embedding_cache.json"
+    )
+    index = KnowledgeIndex(
+        chroma_path=config["chroma_path"],
+        embedding_generator=embedding_gen
+    )
     
     try:
+        # 1. 导入文件
         knowledge_items = ingest.import_file(args.file)
         logger.info(f"✅ 导入成功：{len(knowledge_items)} 个知识条目")
         
+        # 2. 添加到索引（自动生成嵌入）
+        count = index.add_documents(knowledge_items, auto_generate=True)
+        logger.info(f"✅ 索引成功：{count} 个文档")
+        
         # 打印预览
+        print(f"\n✅ 导入完成！")
+        print(f"   - 知识条目：{len(knowledge_items)} 个")
+        print(f"   - 索引文档：{count} 个")
         print(f"\n导入预览（前 3 条）：")
         for i, item in enumerate(knowledge_items[:3], 1):
             preview = item["content"][:100].replace('\n', ' ')
             print(f"  {i}. {preview}...")
         
-        # TODO: 添加到索引
-        logger.warning("⚠️  索引功能尚未实现，知识条目未保存")
-        
     except Exception as e:
         logger.error(f"❌ 导入失败：{e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
@@ -73,9 +89,53 @@ def cmd_search(args):
     
     config = load_config()
     
-    # TODO: 初始化索引和搜索
-    logger.warning("⚠️  搜索功能尚未实现")
-    print("搜索功能开发中，请稍后...")
+    try:
+        # 初始化组件
+        embedding_gen = EmbeddingGenerator(
+            cache_path="./data/embedding_cache.json"
+        )
+        index = KnowledgeIndex(
+            chroma_path=config["chroma_path"],
+            embedding_generator=embedding_gen
+        )
+        searcher = KnowledgeSearch(index=index)
+        
+        # 生成查询嵌入
+        print(f"🔍 正在搜索：{args.query}")
+        logger.info("正在生成查询嵌入...")
+        query_embedding = embedding_gen.generate(args.query)
+        
+        # 执行搜索
+        results = searcher.search(
+            query=args.query,
+            query_embedding=query_embedding,
+            limit=args.limit,
+            use_hybrid=True
+        )
+        
+        # 显示结果
+        if not results or (len(results) == 1 and results[0].get("metadata", {}).get("error")):
+            print("\n❌ 未找到相关知识")
+            return
+        
+        print(f"\n✅ 找到 {len(results)} 条相关知识：\n")
+        for i, result in enumerate(results, 1):
+            content = result.get("content", "")[:200].replace('\n', ' ')
+            source = result.get("metadata", {}).get("source", "未知")
+            distance = result.get("distance")
+            
+            print(f"**{i}.** {content}...")
+            print(f"   - 来源：{source}")
+            if distance is not None:
+                print(f"   - 相似度：{1 - distance:.4f}（距离：{distance:.4f}）")
+            print()
+        
+    except Exception as e:
+        logger.error(f"❌ 搜索失败：{e}")
+        import traceback
+        traceback.print_exc()
+        print(f"\n❌ 搜索失败：{e}")
+        sys.exit(1)
 
 
 def cmd_stats(args):

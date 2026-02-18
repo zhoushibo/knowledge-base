@@ -7,6 +7,7 @@
 import logging
 from typing import List, Dict, Optional
 import os
+from .embedding_generator import EmbeddingGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -14,16 +15,19 @@ logger = logging.getLogger(__name__)
 class KnowledgeIndex:
     """知识索引器"""
     
-    def __init__(self, chroma_path: Optional[str] = None, collection_name: str = "knowledge"):
+    def __init__(self, chroma_path: Optional[str] = None, collection_name: str = "knowledge", 
+                 embedding_generator: Optional[EmbeddingGenerator] = None):
         """
         初始化知识索引器。
         
         Args:
             chroma_path: ChromaDB 数据路径（None 表示内存模式）
             collection_name: 集合名称
+            embedding_generator: 嵌入生成器实例（可选）
         """
         self.chroma_path = chroma_path
         self.collection_name = collection_name
+        self.embedding_generator = embedding_generator
         self.client = None
         self.collection = None
         
@@ -65,13 +69,15 @@ class KnowledgeIndex:
             logger.error(f"ChromaDB 初始化失败：{e}")
             raise
     
-    def add_documents(self, documents: List[Dict], embeddings: Optional[List[List[float]]] = None) -> int:
+    def add_documents(self, documents: List[Dict], embeddings: Optional[List[List[float]]] = None, 
+                      auto_generate: bool = True) -> int:
         """
         添加文档到索引。
         
         Args:
             documents: 文档列表（包含 content 和 metadata）
             embeddings: 预计算的嵌入向量（None 表示自动计算）
+            auto_generate: 是否自动生成嵌入（需要 embedding_generator）
             
         Returns:
             添加的文档数量
@@ -86,25 +92,37 @@ class KnowledgeIndex:
         contents = [doc["content"] for doc in documents]
         metadatas = [doc["metadata"] for doc in documents]
         
-        # 如果没有提供嵌入，记录日志（实际应由外部计算）
-        if embeddings is None:
-            logger.warning("未提供嵌入向量，需要外部计算后添加")
-            # 简化版本：实际应该调用嵌入生成 API
-            # 这里仅存储文档，不存储向量
-            self.collection.add(
-                documents=contents,
-                metadatas=metadatas,
-                ids=ids
-            )
-        else:
+        # 自动生成嵌入
+        if embeddings is None and auto_generate:
+            if self.embedding_generator:
+                logger.info(f"正在生成 {len(documents)} 个嵌入向量...")
+                try:
+                    embeddings = self.embedding_generator.generate_batch(contents)
+                    logger.info(f"嵌入生成完成")
+                except Exception as e:
+                    logger.error(f"嵌入生成失败：{e}")
+                    embeddings = None
+            else:
+                logger.warning("未提供 embedding_generator，无法自动生成嵌入")
+        
+        # 添加到 ChromaDB
+        if embeddings:
             self.collection.add(
                 embeddings=embeddings,
                 documents=contents,
                 metadatas=metadatas,
                 ids=ids
             )
+            logger.info(f"添加 {len(documents)} 个文档到索引（含嵌入）")
+        else:
+            # 降级：只存储文档，不支持语义搜索
+            self.collection.add(
+                documents=contents,
+                metadatas=metadatas,
+                ids=ids
+            )
+            logger.warning(f"添加 {len(documents)} 个文档到索引（无嵌入，仅关键词搜索）")
         
-        logger.info(f"添加 {len(documents)} 个文档到索引")
         return len(documents)
     
     def search(self, query_embedding: List[float], limit: int = 10) -> List[Dict]:
