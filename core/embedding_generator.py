@@ -79,6 +79,45 @@ class SiliconFlowEmbeddingGenerator:
             except Exception as e:
                 logger.warning(f"保存缓存失败：{e}")
     
+    def _split_text(self, text: str, max_chars: int = 300) -> List[str]:
+        """
+        将长文本分割成多个片段（按字符数，保守估计 token 数）
+        
+        Args:
+            text: 输入文本
+            max_chars: 每个片段的最大字符数（SiliconFlow 限制 512 tokens，保守设为 300 字符）
+            
+        Returns:
+            文本片段列表
+        """
+        # 简单按字符分割（中文 1 字符≈1 token，留 70% 余量）
+        if len(text) <= max_chars:
+            return [text]
+        
+        # 按句子分割（保持语义完整）
+        import re
+        sentences = re.split(r'([。！？！？\n]+)', text)
+        
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for sentence in sentences:
+            sentence_length = len(sentence)
+            if current_length + sentence_length > max_chars and current_chunk:
+                # 当前块已满，开始新块
+                chunks.append(''.join(current_chunk))
+                current_chunk = [sentence]
+                current_length = sentence_length
+            else:
+                current_chunk.append(sentence)
+                current_length += sentence_length
+        
+        if current_chunk:
+            chunks.append(''.join(current_chunk))
+        
+        return chunks if chunks else [text]
+    
     async def generate_async(self, text: str) -> List[float]:
         """
         生成单个文本的嵌入向量（异步）
@@ -95,7 +134,43 @@ class SiliconFlowEmbeddingGenerator:
             logger.debug(f"使用缓存的嵌入：{cache_key[:8]}...")
             return self.cache[cache_key]
         
-        # 调用 SiliconFlow API
+        # 分割长文本
+        chunks = self._split_text(text)
+        
+        if len(chunks) == 1:
+            # 短文本，直接生成
+            embedding = await self._generate_single_chunk(chunks[0])
+        else:
+            # 长文本，分段生成后取平均
+            logger.info(f"长文本分割为 {len(chunks)} 个片段")
+            embeddings = []
+            for i, chunk in enumerate(chunks):
+                logger.debug(f"处理片段 {i+1}/{len(chunks)}")
+                emb = await self._generate_single_chunk(chunk)
+                embeddings.append(emb)
+            
+            # 平均 pooling
+            embedding = [
+                sum(emb[i] for emb in embeddings) / len(embeddings)
+                for i in range(len(embeddings[0]))
+            ]
+        
+        # 缓存结果
+        self.cache[cache_key] = embedding
+        self._save_cache()
+        
+        return embedding
+    
+    async def _generate_single_chunk(self, text: str) -> List[float]:
+        """
+        生成单个文本片段的嵌入向量
+        
+        Args:
+            text: 文本片段（必须 < 512 tokens）
+            
+        Returns:
+            嵌入向量
+        """
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {
@@ -108,7 +183,7 @@ class SiliconFlowEmbeddingGenerator:
                     "encoding_format": "float"
                 }
                 
-                logger.info(f"正在调用 SiliconFlow API：{text[:50]}...")
+                logger.debug(f"调用 SiliconFlow API：{text[:30]}...")
                 async with session.post(
                     f"{self.base_url}/embeddings",
                     headers=headers,
@@ -121,21 +196,12 @@ class SiliconFlowEmbeddingGenerator:
                     
                     result = await response.json()
                     embedding = result['data'][0]['embedding']
-                    
-                    # 缓存结果
-                    self.cache[cache_key] = embedding
-                    self._save_cache()
-                    
-                    logger.info(f"嵌入生成成功：{len(embedding)} 维")
                     return embedding
                     
         except Exception as e:
             logger.error(f"嵌入生成失败：{e}")
             # Fallback：返回零向量
-            fallback_embedding = [0.0] * 1024
-            self.cache[cache_key] = fallback_embedding
-            self._save_cache()
-            return fallback_embedding
+            return [0.0] * 1024
     
     def generate(self, text: str) -> List[float]:
         """
