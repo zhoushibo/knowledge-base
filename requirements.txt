@@ -2,7 +2,8 @@
 chromadb>=0.4.0
 sqlite-utils>=3.35
 
-# NVIDIA API
+# Gateway 客户端
+websockets>=12.0
 requests>=2.31.0
 
 # 工具库
