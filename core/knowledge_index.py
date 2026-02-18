@@ -41,17 +41,13 @@ class KnowledgeIndex:
         
         try:
             import chromadb
-            from chromadb.config import Settings
             
-            # 初始化客户端
+            # 新版本 ChromaDB 初始化方式
             if self.chroma_path:
                 os.makedirs(self.chroma_path, exist_ok=True)
-                self.client = chromadb.Client(Settings(
-                    chroma_db_impl="duckdb+parquet",
-                    persist_directory=self.chroma_path
-                ))
+                self.client = chromadb.PersistentClient(path=self.chroma_path)
             else:
-                self.client = chromadb.Client()
+                self.client = chromadb.EphemeralClient()
             
             # 获取或创建集合
             self.collection = self.client.get_or_create_collection(

@@ -58,12 +58,13 @@ class EmbeddingGenerator:
             except Exception as e:
                 logger.warning(f"保存缓存失败：{e}")
     
-    def generate(self, text: str) -> List[float]:
+    def generate(self, text: str, input_type: str = "query") -> List[float]:
         """
         生成单个文本的嵌入向量。
         
         Args:
             text: 输入文本
+            input_type: 输入类型（"query" 或 "passage"）
             
         Returns:
             嵌入向量（列表）
@@ -88,10 +89,12 @@ class EmbeddingGenerator:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        # 使用 NVIDIA 推荐的嵌入模型
         payload = {
-            "input": text,
-            "model": "nvidia/nv-embedqa-e5-v5",  # 使用免费的嵌入模型
-            "encoding_format": "float"
+            "input": [text],  # API 要求 input 是列表
+            "model": "nvidia/nv-embedqa-e5-v5",
+            "encoding_format": "float",
+            "input_type": input_type
         }
         
         logger.debug(f"请求 NVIDIA API: {url}")
@@ -112,7 +115,24 @@ class EmbeddingGenerator:
             
         except requests.exceptions.RequestException as e:
             logger.error(f"NVIDIA API 请求失败：{e}")
-            raise RuntimeError(f"嵌入生成失败：{e}")
+            # 尝试不带 input_type 的简化版本
+            logger.info("尝试使用简化参数重试...")
+            payload_simple = {
+                "input": [text],
+                "model": "nvidia/nv-embedqa-e5-v5",
+                "encoding_format": "float"
+            }
+            try:
+                response = requests.post(url, headers=headers, json=payload_simple, timeout=30)
+                response.raise_for_status()
+                result = response.json()
+                embedding = result["data"][0]["embedding"]
+                self.cache[cache_key] = embedding
+                self._save_cache()
+                return embedding
+            except Exception as e2:
+                logger.error(f"重试失败：{e2}")
+                raise RuntimeError(f"嵌入生成失败：{e}")
         except (KeyError, IndexError) as e:
             logger.error(f"API 响应格式异常：{e}")
             raise RuntimeError(f"嵌入解析失败：{e}")
