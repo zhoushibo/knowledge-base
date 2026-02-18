@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core import KnowledgeIngest, KnowledgeIndex, KnowledgeSearch, KnowledgeLink, EmbeddingGenerator
+from core.knowledge_search_fts import KnowledgeSearchFTS
 
 # 配置日志
 logging.basicConfig(
@@ -138,6 +139,67 @@ def cmd_search(args):
         sys.exit(1)
 
 
+def cmd_search_fts(args):
+    """FTS5 关键词搜索命令"""
+    logger.info(f"开始 FTS5 搜索：{args.query}")
+    config = load_config()
+    
+    try:
+        # 初始化 FTS5 搜索引擎
+        fts = KnowledgeSearchFTS(db_path="./data/knowledge_fts.db")
+        
+        # 执行搜索
+        print(f"🔍 FTS5 关键词搜索：{args.query}")
+        results = fts.search(
+            query=args.query,
+            limit=args.limit,
+            highlight=True
+        )
+        
+        # 显示结果
+        if not results:
+            print("\n❌ 未找到匹配结果")
+            fts.close()
+            return
+        
+        print(f"\n✅ 找到 {len(results)} 条匹配结果：\n")
+        for i, result in enumerate(results, 1):
+            title = result.get("title", "")
+            content = result.get("content", "")
+            source = result.get("source", "未知")
+            tags = result.get("tags", "")
+            score = result.get("score", 0)
+            
+            # 显示标题
+            if title:
+                print(f"**{i}. {title}**")
+            else:
+                print(f"**{i}.**")
+            
+            # 显示内容（含高亮）
+            print(f"    {content}")
+            
+            # 显示元数据
+            if tags:
+                print(f"    标签：{tags}")
+            print(f"    来源：{source}")
+            print(f"    相关性：{score:.4f}")
+            print()
+        
+        # 统计
+        stats = fts.get_stats()
+        print(f"📊 索引统计：共 {stats['total_documents']} 条文档")
+        
+        fts.close()
+        
+    except Exception as e:
+        logger.error(f"❌ FTS5 搜索失败：{e}")
+        import traceback
+        traceback.print_exc()
+        print(f"\n❌ FTS5 搜索失败：{e}")
+        sys.exit(1)
+
+
 def cmd_stats(args):
     """统计信息命令"""
     print("\n📊 知识库统计信息")
@@ -179,10 +241,16 @@ def main():
     parser_import.set_defaults(func=cmd_import)
     
     # search 命令
-    parser_search = subparsers.add_parser("search", help="搜索知识")
+    parser_search = subparsers.add_parser("search", help="语义搜索知识")
     parser_search.add_argument("query", type=str, help="搜索查询")
     parser_search.add_argument("-l", "--limit", type=int, default=10, help="返回结果数量")
     parser_search.set_defaults(func=cmd_search)
+    
+    # search-ft 命令（FTS5 关键词搜索）
+    parser_search_fts = subparsers.add_parser("search-ft", help="FTS5 关键词搜索")
+    parser_search_fts.add_argument("query", type=str, help="搜索关键词")
+    parser_search_fts.add_argument("-l", "--limit", type=int, default=10, help="返回结果数量")
+    parser_search_fts.set_defaults(func=cmd_search_fts)
     
     # stats 命令
     parser_stats = subparsers.add_parser("stats", help="查看统计信息")
