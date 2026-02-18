@@ -1,0 +1,25 @@
+# 核心依赖
+chromadb>=0.4.0
+sqlite-utils>=3.35
+
+# NVIDIA API
+requests>=2.31.0
+
+# 工具库
+python-dotenv>=1.0.0
+tiktoken>=0.5.0
+
+# 测试
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-benchmark>=4.0.0
+
+# 代码质量
+black>=23.12.0
+flake8>=7.0.0
+mypy>=1.8.0
+pylint>=3.0.0
+
+# 工具（可选）
+tqdm>=4.66.0  # 进度条
+rich>=13.7.0  # 美化 CLI 输出
